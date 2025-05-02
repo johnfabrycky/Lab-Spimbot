@@ -64,70 +64,87 @@ main:
         sw $t2, VELOCITY
 
         # YOUR CODE GOES HERE!!!!!!
-			#TODO - solve_puzzle(0) multiple times
-		li $a0, 0
-		jal solve_puzzle
-
-		li $a0, 0
-		jal solve_puzzle
-
-		li $a0, 0
-		jal solve_puzzle
-		#sw $zero, REQUEST_PUZZLE
-		#jal solve_puzzle
-		#sw $zero, REQUEST_PUZZLE
-		#jal solve_puzzle
-
-		
-		###########PART 1 PART 1 PART 1 PART 1 PART 1 PART 1 PART 1 PART 1 PART 1 PART 1###########
-		li $t3, 90####
+		#putting some movement before solving puzzles
+		li $t3, 90
         sw $t3, ANGLE
         li $t3, 0
         sw $t3, ANGLE_CONTROL
-
-        #ENABLE interrupts
-        #ori $t4, $zero, TIMER_INT_MASK
-        #mtc0 $t4, $12
-
-        #lw $t4, TIMER
-        #lui $t5, 1
-        #ori $t5, $t5, 5000
-        #add $t4, $t4, $t5
-        #sw $t4, TIMER
 
         li $t3, 10
         sw $t3, VELOCITY
 
         loop0:
             lw $t0, BOT_Y
+			#lw $t1, BOT_X
+			#bge $t1, 52, after0
             blt $t0, 290, loop0
+		
+		after0:
         
-        li $t3, 90
+        li $t3, 270
         sw $t3, ANGLE
-        li $t3, 0
+    	li $t3, 0
         sw $t3, ANGLE_CONTROL
 
-        loop1:
+		loop1:
             lw $t0, BOT_X
-            bgt $t0, 30, loop1
+            blt $t0, 180, loop1
+
+		#sw $t4, UNLOCK_SLAB
 
         li $t3, 270
         sw $t3, ANGLE
         li $t3, 0
         sw $t3, ANGLE_CONTROL
 
-        loop2:
-            lw $t0, BOT_Y
-            blt $t0, 300, loop2
+		loop2:
+			lw $t0, BOT_Y
+			bge $t0, 240, loop2
 
-        li $t3, 270
-        sw $t3, ANGLE
-        li $t3, 0
-        sw $t3, ANGLE_CONTROL
+		sw $t4, LOCK_SLAB
 
-        loop3:
-            lw $t0, BOT_X
-            blt $t0, 250, loop3
+		li $t3, 90
+		sw $t3, ANGLE
+		li $t3, 0
+		sw $t3, ANGLE_CONTROL
+
+		loop3:
+			lw $t0, BOT_X
+			blt $t0, 250, loop3
+
+
+		li $t0, 0
+		solve_for:
+			bge $t0, 5, after
+
+			li $a0, 0
+			jal solve_puzzle
+
+			addi $t0, $t0, 1
+			j solve_for
+		after:
+		
+        #loop1:
+        #    lw $t0, BOT_X
+        #    bgt $t0, 30, loop1
+
+        #li $t3, 270
+        #sw $t3, ANGLE
+        #li $t3, 0
+        #sw $t3, ANGLE_CONTROL
+
+        #loop2:
+        #    lw $t0, BOT_Y
+        #    blt $t0, 300, loop2
+
+        #li $t3, 270
+        #sw $t3, ANGLE
+        #li $t3, 0
+        #sw $t3, ANGLE_CONTROL
+
+        #loop3:
+        #    lw $t0, BOT_X
+        #    blt $t0, 250, loop3
 
         li $t3, 0
         sw $t3, VELOCITY
