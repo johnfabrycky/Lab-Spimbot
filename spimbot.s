@@ -40,7 +40,10 @@ MMIO_STATUS             = 0xffff204c
 GET_ENERGY	 	= 0xffff2014
 
 .data
-
+feedbacks: 		.space 96
+state:			.space 32
+wait:			.byte 0
+feedback_received: .byte 0
 # If you want, you can use the following to detect if a bonk has happened.
 has_bonked: .byte 0
 
@@ -61,6 +64,139 @@ main:
         sw $t2, VELOCITY
 
         # YOUR CODE GOES HERE!!!!!!
+			#TODO - solve_puzzle(0) multiple times
+		li $a0, 0
+		jal solve_puzzle
+
+		li $a0, 0
+		jal solve_puzzle
+
+		li $a0, 0
+		jal solve_puzzle
+		#sw $zero, REQUEST_PUZZLE
+		#jal solve_puzzle
+		#sw $zero, REQUEST_PUZZLE
+		#jal solve_puzzle
+
+		
+		###########PART 1 PART 1 PART 1 PART 1 PART 1 PART 1 PART 1 PART 1 PART 1 PART 1###########
+		li $t3, 90####
+        sw $t3, ANGLE
+        li $t3, 0
+        sw $t3, ANGLE_CONTROL
+
+        #ENABLE interrupts
+        #ori $t4, $zero, TIMER_INT_MASK
+        #mtc0 $t4, $12
+
+        #lw $t4, TIMER
+        #lui $t5, 1
+        #ori $t5, $t5, 5000
+        #add $t4, $t4, $t5
+        #sw $t4, TIMER
+
+        li $t3, 10
+        sw $t3, VELOCITY
+
+        loop0:
+            lw $t0, BOT_Y
+            blt $t0, 290, loop0
+        
+        li $t3, 90
+        sw $t3, ANGLE
+        li $t3, 0
+        sw $t3, ANGLE_CONTROL
+
+        loop1:
+            lw $t0, BOT_X
+            bgt $t0, 30, loop1
+
+        li $t3, 270
+        sw $t3, ANGLE
+        li $t3, 0
+        sw $t3, ANGLE_CONTROL
+
+        loop2:
+            lw $t0, BOT_Y
+            blt $t0, 300, loop2
+
+        li $t3, 270
+        sw $t3, ANGLE
+        li $t3, 0
+        sw $t3, ANGLE_CONTROL
+
+        loop3:
+            lw $t0, BOT_X
+            blt $t0, 250, loop3
+
+        li $t3, 0
+        sw $t3, VELOCITY
+
+        li $t4, 0
+        sw $t4, LOCK_SLAB
+
+        sw $t4, UNLOCK_SLAB
+
+		jr $ra
+
+		solve_puzzle:
+			sub $sp, $sp, 12
+			sw $ra, 0($sp)
+			sw $s0, 4($sp)
+			sw $s1, 8($sp)
+
+			li $s0, 0 			#current_feedback = NULL
+
+			li $t0, 1
+			sw $t0, REQUEST_PUZZLE
+			sw $a0, CURRENT_PUZZLE
+
+			li $s1, 0			#i = 0
+			for:
+				add $a0, $s0, $zero 	#current_feedback
+				la $a1, state
+				jal build_state
+
+				la $a0, state	#&state
+				la $a1, words 	#words
+				jal find_matching_word
+
+				mul $t0, $s1, 16 		#offset
+				la $t1, feedbacks
+				add $t0, $t0, $t1
+				sw $t0, PUZZLE_FEEDBACK
+				sw $v0, SUBMIT_SOLUTION
+
+				while:
+					la $t0, feedback_received
+					lb $t1, 0($t0)
+					beq $t1, $zero, while
+
+				sb $zero, 0($t0)	#feedback_received = 0
+
+				mul $t0, $s1, 16
+				la $t2, feedbacks
+				add $a0, $t0, $t2
+				jal is_solved
+				beq $v0, 1, cleanup #if (is_solved(&feedbacks[i])) {return}
+
+				mul $t0, $s1, 16
+				la $t2, feedbacks
+				add $t0, $t0, $t2
+				sw $s0, 12($t0) 	#feedbacks[i].next = current_feedback
+				add $s0, $t0, $zero
+
+
+				add $s1, $s1, 1
+				bge $s1, 6, cleanup
+				j for
+
+			cleanup:
+			lw $ra, 0($sp)
+			lw $s0, 4($sp)
+			lw $s1, 8($sp)
+			add $sp, $sp, 12
+			jr $ra
 
 
 rest:
