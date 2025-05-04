@@ -40,8 +40,12 @@ MMIO_STATUS             = 0xffff204c
 GET_ENERGY	 	= 0xffff2014
 
 .data
+map_buffer: .space 1600
+slab_buffer: .space 68
 feedbacks: 		.space 96
 state:			.space 32
+has_timer:  .byte 0
+my_owner:   .byte 0
 wait:			.byte 0
 feedback_received: .byte 0
 # If you want, you can use the following to detect if a bonk has happened.
@@ -53,6 +57,7 @@ main:
         li      $t4     1
         or      $t4     $t4     TIMER_INT_MASK
         or      $t4,    $t4,    BONK_INT_MASK             # enable bonk interrupt
+		or      $t4,	$t4, 	FEEDBACK_INT_MASK
         or      $t4,    $t4,    1 # global enable
         mtc0    $t4     $12
 
@@ -62,6 +67,12 @@ main:
         sw $t1, ANGLE_CONTROL
         li $t2, 0
         sw $t2, VELOCITY
+
+		la $t0, map_buffer
+        sw $t0, GET_MAP
+
+		la $t0, slab_buffer
+        sw $t0, GET_SLABS
 
         # YOUR CODE GOES HERE!!!!!!
 		#putting some movement before solving puzzles
@@ -156,68 +167,192 @@ main:
 
 		jr $ra
 
-		solve_puzzle:
-			sub $sp, $sp, 12
-			sw $ra, 0($sp)
-			sw $s0, 4($sp)
-			sw $s1, 8($sp)
+solve_puzzle:
+	sub $sp, $sp, 12
+	sw $ra, 0($sp)
+	sw $s0, 4($sp)
+	sw $s1, 8($sp)
 
-			li $s0, 0 			#current_feedback = NULL
+	li $s0, 0 			#current_feedback = NULL
 
-			li $t0, 1
-			sw $t0, REQUEST_PUZZLE
-			sw $a0, CURRENT_PUZZLE
+	li $t0, 1
+	sw $t0, REQUEST_PUZZLE
+	sw $a0, CURRENT_PUZZLE
 
-			li $s1, 0			#i = 0
-			for:
-				add $a0, $s0, $zero 	#current_feedback
-				la $a1, state
-				jal build_state
+	li $s1, 0			#i = 0
+	for:
+		add $a0, $s0, $zero 	#current_feedback
+		la $a1, state
+		jal build_state
 
-				la $a0, state	#&state
-				la $a1, words 	#words
-				jal find_matching_word
+		la $a0, state	#&state
+		la $a1, words 	#words
+		jal find_matching_word
 
-				mul $t0, $s1, 16 		#offset
-				la $t1, feedbacks
-				add $t0, $t0, $t1
-				sw $t0, PUZZLE_FEEDBACK
-				sw $v0, SUBMIT_SOLUTION
+		mul $t0, $s1, 16 		#offset
+		la $t1, feedbacks
+		add $t0, $t0, $t1
+		sw $t0, PUZZLE_FEEDBACK
+		sw $v0, SUBMIT_SOLUTION
 
-				while:
-					la $t0, feedback_received
-					lb $t1, 0($t0)
-					beq $t1, $zero, while
+		while:
+			la $t0, feedback_received
+			lb $t1, 0($t0)
+			beq $t1, $zero, while
 
-				sb $zero, 0($t0)	#feedback_received = 0
+		sb $zero, 0($t0)	#feedback_received = 0
 
-				mul $t0, $s1, 16
-				la $t2, feedbacks
-				add $a0, $t0, $t2
-				jal is_solved
-				beq $v0, 1, cleanup #if (is_solved(&feedbacks[i])) {return}
+		mul $t0, $s1, 16
+		la $t2, feedbacks
+		add $a0, $t0, $t2
+		jal is_solved
+		beq $v0, 1, cleanup #if (is_solved(&feedbacks[i])) {return}
 
-				mul $t0, $s1, 16
-				la $t2, feedbacks
-				add $t0, $t0, $t2
-				sw $s0, 12($t0) 	#feedbacks[i].next = current_feedback
-				add $s0, $t0, $zero
+		mul $t0, $s1, 16
+		la $t2, feedbacks
+		add $t0, $t0, $t2
+		sw $s0, 12($t0) 	#feedbacks[i].next = current_feedback
+		add $s0, $t0, $zero
 
 
-				add $s1, $s1, 1
-				bge $s1, 6, cleanup
-				j for
+		add $s1, $s1, 1
+		bge $s1, 6, cleanup
+		j for
 
-			cleanup:
-			lw $ra, 0($sp)
-			lw $s0, 4($sp)
-			lw $s1, 8($sp)
-			add $sp, $sp, 12
-			jr $ra
+	cleanup:
+	lw $ra, 0($sp)
+	lw $s0, 4($sp)
+	lw $s1, 8($sp)
+	add $sp, $sp, 12
+	jr $ra
+
 
 
 rest:
         j       rest
+
+
+
+bonk_check:
+    # Check bonk flag.
+    la   $t0, has_bonked
+    lb   $t1, 0($t0) 
+    beq  $t1, $zero, no_bonk  #if 0, no bonk—return
+    sb   $zero, 0($t0)        # reset bonk flag
+
+    lw   $t2, ANGLE          
+    li   $t3, 0              # dx default = 0
+    li   $t4, 0              # dy default = 0
+    beq  $t2, 0, set_angle0
+    beq  $t2, 90, set_angle90
+    beq  $t2, -270, set_angle90
+    beq  $t2, 180, set_angle180
+    beq  $t2, -180, set_angle180
+    beq  $t2, 270, set_angle270
+    beq  $t2, -90, set_angle270
+    j    compute_front
+
+    set_angle0:
+        li   $t3, 1              # facing right: dx = 1
+        li   $t4, 0              # dy = 0
+        j    compute_front
+    set_angle90:
+        li   $t3, 0              # facing up: dx = 0
+        li   $t4, 1             # dy = 1 (y decreases upward)
+        j    compute_front
+    set_angle180:
+        li   $t3, -1             # facing left: dx = -1
+        li   $t4, 0
+        j    compute_front
+    set_angle270:
+        li   $t3, 0              # facing down: dx = 0
+        li   $t4, -1              # dy = -1
+        # fall through
+
+    compute_front:
+        lw   $t5, BOT_X 
+        lw   $t6, BOT_Y
+        srl  $t5, $t5, 3         # tile_x = BOT_X / 8
+        srl  $t6, $t6, 3         # tile_y = BOT_Y / 8
+
+        add  $t0, $t5, $t3       # $t0 = front_tile_x = x + dx
+        add  $t1, $t6, $t4       # $t1 = front_tile_y = y + dy
+
+        li   $t8, 40
+        mul  $t9, $t1, $t8
+        add  $t9, $t9, $t0       # $t9 = front_tile_y * 40 + front_tile_x = map[x][y]
+
+        la   $t6, map_buffer
+        add  $t6, $t6, $t9
+        lb   $t6, 0($t6)         # $t6 = tile type at [x][y]
+
+        li   $t7, 2              # wall
+        beq  $t6, $t7, no_push
+
+        sub $sp, $sp, 16
+        sw   $t0, 0($sp)         # front_tile_x
+        sw   $t1, 4($sp)         # front_tile_y
+        sw   $t3, 8($sp)         # dx
+        sw   $t4, 12($sp)        # dy
+
+        la   $t6, slab_buffer    
+        # lw   $t7, 0($t6)         # $t7 = slab array length 
+        li   $t7, 11
+        li   $t2, 0              # i = 0
+
+    slab_loop:
+        bge  $t2, $t7, end_slab_loop  # if i >= length
+
+        li   $t3, 4              # base offset (first 4 bytes hold the length)
+        mul  $t4, $t2, $t3
+        # add  $t4, $t3, $t4
+        add  $t3, $t6, $t4       # t3 = slab[i]
+
+        lbu   $t5, 0($t3)   # $t5 = pos_x (first byte)
+        lbu   $t4, 1($t3)   # $t4 = pos_y (second byte)
+
+        lw   $t0, 0($sp)         # $t0 = front_tile_x
+        lw   $t1, 4($sp)         # $t1 = front_tile_y
+        lw   $t8, 8($sp)         # $t8 = dx
+        lw   $t9, 12($sp)        # $t9 = dy
+
+        bne  $t5, $t0, next_slab  # if slab pos_x != front_tile_x, check next
+        bne  $t4, $t1, next_slab  # if slab pos_y != front_tile_y, check next
+
+        lbu   $t0, 2($t3)        # load lock/owner byte from slab[i]
+        andi  $t1, $t0, 0x02      # mask bit1 (locked flag)
+        beq   $t1, 0, lock   # if not locked, proceed
+        andi  $t1, $t0, 0x01      # extract owner bit (bit0)
+        la    $t0, my_owner       # load address of my_owner
+        lb    $t0, 0($t0)         # $t0 = my_owner value
+        beq   $t1, $t0, lock_ok   # if slab's owner equals mine, proceed
+        sw    $t2, UNLOCK_SLAB         # write slab index ($t2) to UNLOCK
+        j     lock_ok         
+    
+    lock:
+        li    $t0, 3
+        sw    $t0, LOCK_SLAB
+
+    lock_ok:
+        li   $t2, 1
+        sw   $t2, VELOCITY
+
+    no_update:
+        j    end_slab_loop
+
+    next_slab:
+        addi $t2, $t2, 1         # i = i + 1
+        j    slab_loop
+
+    end_slab_loop:
+        addi $sp, $sp, 16         # restore the stack
+
+    no_bonk:
+        jr   $ra
+
+    no_push:
+        jr   $ra
+
 
 # ======================== kernel code ================================
 .kdata
