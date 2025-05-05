@@ -44,6 +44,8 @@ map_buffer: .space 1600
 slab_buffer: .space 68
 feedbacks: 		.space 96
 state:			.space 32
+wordle_feedback_t:  .space 96
+current_feedback:   .space 4
 has_timer:  .byte 0
 my_owner:   .byte 0
 wait:			.byte 0
@@ -76,161 +78,183 @@ main:
 
         # YOUR CODE GOES HERE!!!!!!
 		#putting some movement before solving puzzles
-		li $t3, 90
-        sw $t3, ANGLE
-        li $t3, 0
-        sw $t3, ANGLE_CONTROL
+		sub $sp, $sp, 8
+		sw  $s0, 0($sp)
+		sw  $s1, 4($sp)
 
-        li $t3, 10
-        sw $t3, VELOCITY
+		jal solve_puzzle
+		jal solve_puzzle
+		jal solve_puzzle
 
-        loop0:
-            lw $t0, BOT_Y
-			#lw $t1, BOT_X
-			#bge $t1, 52, after0
-            blt $t0, 290, loop0
-		
-		after0:
-        
-        li $t3, 270
-        sw $t3, ANGLE
-    	li $t3, 0
-        sw $t3, ANGLE_CONTROL
+		jal move_east  
+		lw $s0, BOT_X
+		addi $s1, $s0, 64
+	for1:
+		lw $s0, BOT_X   
+		bge $s0, $s1, after1
+		addi $s0, $s0, 1
+		jal bonk_check
+		j for1
+	after1:
+		li   $t2, 0
+		sw   $t2, VELOCITY
+		jal move_south 
+		lw $s0, BOT_Y
+		addi $s1, $s0, 56
+	for2:
+		lw $s0, BOT_Y   
+		bge $s0, $s1, after2
+		addi $s0, $s0, 1
+		jal bonk_check
+		j for2
+	after2:
+		li   $t2, 0
+		sw   $t2, VELOCITY
+		jal move_east  
+		lw $s0, BOT_X
+		addi $s1, $s0, 64
+	for3:
+		lw $s0, BOT_X   
+		bge $s0, $s1, after3
+		addi $s0, $s0, 1
+		jal bonk_check
+		j for3
+	after3:
+		li   $t2, 0
+		sw   $t2, VELOCITY
+		lw  $s0, 0($sp)
+		lw  $s1, 4($sp)
+		addi $sp, $sp, 8
+		li    $t0, 3
+		sw    $t0, LOCK_SLAB
+		j rest
 
-		loop1:
-            lw $t0, BOT_X
-            blt $t0, 180, loop1
+wait_feedback:
+    # Wait until the FEEDBACK interrupt sets 'wait' to nonzero.
+	wait_loop:
+		la   $t4, wait         # address of wait variable
+		lb   $t5, 0($t4)       # load wait value
+		beq  $t5, $zero, wait_loop  # loop until wait != 0
 
-		#sw $t4, UNLOCK_SLAB
+		# Stop the bot by setting VELOCITY to 0.
+		li   $t2, 0
+		sw   $t2, VELOCITY
 
-        li $t3, 270
-        sw $t3, ANGLE
-        li $t3, 0
-        sw $t3, ANGLE_CONTROL
+		# Reset wait for the next guess.
+		li   $t0, 0
+		sb   $t0, 0($t4)
 
-		loop2:
-			lw $t0, BOT_Y
-			bge $t0, 240, loop2
+		jr   $ra
 
-		sw $t4, LOCK_SLAB
-
-		li $t3, 90
-		sw $t3, ANGLE
-		li $t3, 0
-		sw $t3, ANGLE_CONTROL
-
-		loop3:
-			lw $t0, BOT_X
-			blt $t0, 250, loop3
-
-
-		li $t0, 0
-		solve_for:
-			bge $t0, 5, after
-
-			li $a0, 0
-			jal solve_puzzle
-
-			addi $t0, $t0, 1
-			j solve_for
-		after:
-		
-        #loop1:
-        #    lw $t0, BOT_X
-        #    bgt $t0, 30, loop1
-
-        #li $t3, 270
-        #sw $t3, ANGLE
-        #li $t3, 0
-        #sw $t3, ANGLE_CONTROL
-
-        #loop2:
-        #    lw $t0, BOT_Y
-        #    blt $t0, 300, loop2
-
-        #li $t3, 270
-        #sw $t3, ANGLE
-        #li $t3, 0
-        #sw $t3, ANGLE_CONTROL
-
-        #loop3:
-        #    lw $t0, BOT_X
-        #    blt $t0, 250, loop3
-
-        li $t3, 0
-        sw $t3, VELOCITY
-
-        li $t4, 0
-        sw $t4, LOCK_SLAB
-
-        sw $t4, UNLOCK_SLAB
-
-		jr $ra
 
 solve_puzzle:
-	sub $sp, $sp, 12
-	sw $ra, 0($sp)
-	sw $s0, 4($sp)
-	sw $s1, 8($sp)
+	sub  $sp, $sp, 16
+	sw   $ra, 0($sp)
+	sw   $s0, 4($sp)
+	sw   $s1, 8($sp)
+	sw   $s2, 12($sp)
 
-	li $s0, 0 			#current_feedback = NULL
+    li   $t0, 1
+    sw   $t0, REQUEST_PUZZLE
 
-	li $t0, 1
-	sw $t0, REQUEST_PUZZLE
-	sw $a0, CURRENT_PUZZLE
+    lw   $t0, AVAIL_PUZZLES
+    sub  $t0, $t0, 1
+    sw   $t0, CURRENT_PUZZLE
 
-	li $s1, 0			#i = 0
-	for:
-		add $a0, $s0, $zero 	#current_feedback
-		la $a1, state
-		jal build_state
+	la   $a0, current_feedback   # address where the pointer to the chain is stored
+	sw   $0, 0($a0)
 
-		la $a0, state	#&state
-		la $a1, words 	#words
-		jal find_matching_word
+    li   $s0, 0             # $t3 = guess count
 
-		mul $t0, $s1, 16 		#offset
-		la $t1, feedbacks
-		add $t0, $t0, $t1
-		sw $t0, PUZZLE_FEEDBACK
-		sw $v0, SUBMIT_SOLUTION
+	guess_loop:
+		beq  $s0, 6, puzzle_solved
 
-		while:
-			la $t0, feedback_received
-			lb $t1, 0($t0)
-			beq $t1, $zero, while
+		la   $s1, wordle_feedback_t   # base of feedback array
+		li   $t2, 16                  # each feedback structure is 16 bytes
+		mul  $t4, $s0, $t2           # $t4 = guess_count * 16
+		add  $s2, $s1, $t4           # $t5 = address for feedback for guess $s2
 
-		sb $zero, 0($t0)	#feedback_received = 0
+		la   $a0, current_feedback   # address where the pointer to the chain is stored
+		lw   $a0, 0($a0)             # current_feedback pointer (or 0 if none)
+		la   $a1, state              # address of state structure (allocate enough space)
+		jal  build_state             # build_state(current_feedback, &state)
 
-		mul $t0, $s1, 16
-		la $t2, feedbacks
-		add $a0, $t0, $t2
-		jal is_solved
-		beq $v0, 1, cleanup #if (is_solved(&feedbacks[i])) {return}
+		la   $a0, state              # pointer to state
+		la   $a1, words              # pointer to the word list
+		jal  find_matching_word      # returns pointer to guess in $v0
+		sw   $s2, PUZZLE_FEEDBACK     # tell the game where to write feedback
 
-		mul $t0, $s1, 16
-		la $t2, feedbacks
-		add $t0, $t0, $t2
-		sw $s0, 12($t0) 	#feedbacks[i].next = current_feedback
-		add $s0, $t0, $zero
+		sw   $v0, SUBMIT_SOLUTION   # submit the guess
+		jal wait_feedback
 
+		move $a0, $s2 
+		jal  is_solved             # returns 1 in $v0 if solved
+		beq  $v0, 1, puzzle_solved
 
-		add $s1, $s1, 1
-		bge $s1, 6, cleanup
-		j for
+		la   $t7, current_feedback  # address where current_feedback is stored
+		lw   $t7, 0($t7)
+		sw   $t7, 12($s2)
+		
+		la   $t7, current_feedback
+    	sw   $s2, 0($t7) 
 
-	cleanup:
-	lw $ra, 0($sp)
-	lw $s0, 4($sp)
-	lw $s1, 8($sp)
-	add $sp, $sp, 12
-	jr $ra
+		# Increment guess counter and try again.
+		addi $s0, $s0, 1
+		j    guess_loop
+
+	puzzle_solved:
+		lw   $ra, 0($sp)
+		lw   $s0, 4($sp)
+		lw   $s1, 8($sp)
+		lw   $s2, 12($sp)
+		addi  $sp, $sp, 16
+		jr   $ra
 
 
 
 rest:
         j       rest
 
+
+move_east:
+
+    li   $t1, 0
+    sw   $t1, ANGLE
+    li $t1, 1
+    sw $t1, ANGLE_CONTROL
+    li   $t2, 1
+    sw   $t2, VELOCITY
+    jr   $ra 
+
+move_south:
+
+    li   $t1, 90
+    sw   $t1, ANGLE
+    li $t1, 1
+    sw $t1, ANGLE_CONTROL
+    li   $t2, 1
+    sw   $t2, VELOCITY
+    jr   $ra 
+
+move_west:
+
+    li   $t1, 180
+    sw   $t1, ANGLE
+    li $t1, 1
+    sw $t1, ANGLE_CONTROL
+    li   $t2, 1
+    sw   $t2, VELOCITY
+    jr   $ra 
+
+move_north:
+
+    li   $t1, 270
+    sw   $t1, ANGLE
+    li $t1, 1
+    sw $t1, ANGLE_CONTROL
+    li   $t2, 1
+    sw   $t2, VELOCITY
+    jr   $ra 
 
 
 bonk_check:
@@ -396,6 +420,9 @@ interrupt_dispatch:                 # Interrupt:
     and     $a0, $k0, BONK_INT_MASK     # is there a bonk interrupt?
     bne     $a0, 0, bonk_interrupt
 
+	and     $a0, $k0, FEEDBACK_INT_MASK     # is there a bonk interrupt?
+    bne     $a0, 0, feedback_interrupt
+
     and     $a0, $k0, TIMER_INT_MASK    # is there a timer interrupt?
     bne     $a0, 0, timer_interrupt
 
@@ -407,11 +434,29 @@ interrupt_dispatch:                 # Interrupt:
 bonk_interrupt:
     sw      $0, BONK_ACK
     #Fill in your bonk handler code here
+	la      $t0, has_bonked 
+    li      $t1, 1
+    sb      $t1, 0($t0)
+    li      $t2, 0
+    sw      $t2, VELOCITY
     j       interrupt_dispatch      # see if other interrupts are waiting
+
+feedback_interrupt:
+	sw      $0, FEEDBACK_ACK
+    #Fill in your bonk handler code here
+	la      $t0, wait 
+    li      $t1, 1
+    sb      $t1, 0($t0)
+    j       interrupt_dispatch 
 
 timer_interrupt:
     sw      $0, TIMER_ACK
     #Fill in your timer interrupt code here
+	la      $t0, has_timer
+    li      $t1, 1  
+    sb      $t1, 0($t0)
+    li      $t2, 0
+    sw      $t2, VELOCITY
     j       interrupt_dispatch      # see if other interrupts are waiting
 
 non_intrpt:                         # was some non-interrupt
