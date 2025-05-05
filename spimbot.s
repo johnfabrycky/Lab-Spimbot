@@ -86,6 +86,19 @@ main:
 		sw  $s4, 16($sp)
 
 
+		jal solve_puzzle
+		jal solve_puzzle
+		jal solve_puzzle
+		jal solve_puzzle
+		jal solve_puzzle
+		jal solve_puzzle
+		jal solve_puzzle
+		jal solve_puzzle
+		jal solve_puzzle
+		jal solve_puzzle
+		jal solve_puzzle
+		jal solve_puzzle
+
 		# slab loop: for (i = 0; i < length; i++)
         la    $t0, slab_buffer
         lw    $s1, 0($t0)         # s1 = slab_count
@@ -94,7 +107,6 @@ main:
 	slab_loop_:
         bge   $s2, $s1, slab_done
 
-       inner_push:
         # 1) refresh slab info
         la    $t0, slab_buffer
         sw    $t0, GET_SLABS
@@ -107,24 +119,101 @@ main:
         lbu   $s3, 0($t4)         # pos_row
         lbu   $s4, 1($t4)         # pos_col
 
+		mul   $t5, $s2, $t3       # recalc slab[i] base
+		add   $t5, $t5, $t0
+		addi  $t5, $t5, 6         # +2 → lock/owner byte
+		lbu   $t6, 0($t5)
+		andi  $t7, $t6, 0x02      # t7 = locked?
+		beq   $t7, $zero, push_ok
+		andi  $t7, $t6, 0x01      # t7 = owner
+		la    $t8, my_owner
+		lb    $t8, 0($t8)
+		bne   $t7, $t8, do_unlock
+		j     push_ok
+	do_unlock:
+		move  $a0, $s2
+		sw    $a0, UNLOCK_SLAB
+
+	push_ok:
         # 3) have we already crossed the center line?
-        sll   $t7, $s4, 3         # pixel_center_x = col * 8
+        mul   $t7, $s4, 8         # pixel_center_x = col * 8
         addi  $t7, $t7, 4
-        li    $t8, 160
-        bgt   $t7, $t8, skip_slab
+		li	  $t8, 160
+        bge   $t7, $t8, skip_slab
 
-        # 4) move to *one tile west* of the slab
-        addi  $a0, $s4, -1        # target_col = pos_col - 1
-        move  $a1, $s3            # target_row = pos_row
-        jal   move_to_tile
+		li	 	$t6, 5
+		blt 	$s3,$t6, horiz_push
+		li		$t6, 35
+		bge		$s3, $t6, horiz_push
 
-        # 5) grab exclusive ownership
-        move  $a0, $s2
-        sw    $a0, LOCK_SLAB
+		sub  $t7, $s4, 1        # approach_col = slab_col-1
+		li    $t6, 20
+		blt   $s3, $t6, approach_above
+		j     approach_down
 
-        # 6) push *one* tile east (in push_loop)
-        jal   push_loop
+		approach_above:
+			addi  $t8, $s3, 1        # approach_row = slab_row-1
+		approach_av:
+			move  $a0, $t7
+			move  $a1, $t8
+			jal   move_to_tile
 
+			move  $a0, $s2
+        	sw    $a0, LOCK_SLAB
+
+        	jal   vertical_shift
+
+			move $a0, $s4
+			li $a1, 5
+			jal   move_to_tile
+
+			lw    $a0,BOT_Y
+			srl  $a0, $a0, 3
+			sub  $a1, $a0, 1
+			sub  $a0, $s4, 1   
+			jal   move_to_tile
+
+
+			jal   push_loop
+
+			j     skip_slab
+
+
+		
+		approach_down:
+			sub  $t8, $s3, 1        # approach_row = slab_row-1
+		approach_do:
+			move  $a0, $t7
+			move  $a1, $t8
+			jal   move_to_tile
+
+			move  $a0, $s2
+        	sw    $a0, LOCK_SLAB
+
+        	jal   vertical_shift
+
+			move $a0, $s4
+			li $a1, 34
+			jal   move_to_tile
+
+			lw    $a0,BOT_Y
+			srl  $a0, $a0, 3
+			addi  $a1, $a0, 1
+			sub  $a0, $s4, 1   
+			jal   move_to_tile
+
+
+			jal   push_loop
+
+			j     skip_slab
+
+
+
+		horiz_push:
+			sub  $a0, $s4, 1        # west of slab
+			move  $a1, $s3
+			jal   move_to_tile
+			jal   push_loop
 
 	skip_slab:
         addi  $s2, $s2, 1
@@ -140,6 +229,25 @@ main:
 
         # now jump into your existing rest loop
         j     rest
+
+		vertical_shift:
+			vert_loop:
+				lw    $t1, BOT_Y
+				srl   $t1, $t1, 3         # tile_y = BOT_Y/8
+				beq   $t1, $t8, vs_done
+				blt   $t1, $t8, vs_south
+				jal   move_north
+				j     vs_wait
+			vs_south:
+				jal   move_south
+			vs_wait:
+				lw    $t1, BOT_Y
+				srl   $t1, $t1, 3
+				bne   $t1, $t8, vert_loop
+			vs_done:
+				jr    $ra
+
+
 
 # move_to_tile(col,row)
 move_to_tile:
@@ -201,7 +309,7 @@ move_to_tile:
 push_loop:
     #—— save $ra once ——  
     sub  $sp,$sp,4
-    sw    $ra,0($sp)
+    sw   $ra,0($sp)
 
 	push_body:
 		# 1) start pushing east
@@ -210,50 +318,28 @@ push_loop:
 		# 2) clear any leftover bonk flag
 		sb    $zero,has_bonked
 
-		# 3) re‐fetch slab info
-		la    $t0,slab_buffer
-		sw    $t0,GET_SLABS
-
-		# pull out this slab’s column
-		li    $t1,4
-		mul   $t2,$s2,$t1        # assume slab index in $s2
-		add   $t2,$t2,$t0
-		addi  $t2,$t2,1          # +1 to point at col byte
-		lbu   $t8,0($t2)         # t8 = slab_col
-
-		# compute front_pixel_x = (col*8 + 4) + 8
-		sll   $t8,$t8,3
-		addi  $t8,$t8,12         # = col*8 + 12
-
 	wait_loop_:
 		# 4) have *we* moved the slab up to that threshold?
-		lw    $t9,BOT_X
-		bge   $t9,$t8,maybe_stop
+		lw    $t0,BOT_X
+		li	  $t1, 180
+		bge   $t0,$t1, push_done
 
 		# 5) still moving → check for a bonk
 		jal   bonk_check
 		# bonk_check resets has_bonked, so instead check VELOCITY
 		lw    $t1,VELOCITY
-		beq   $t1,$zero,push_bonked
+		beq   $t1, $zero, push_done
 
 		j     wait_loop_
 
-	maybe_stop:
-		# 6) slab has crossed the *center*?
-		li    $t9,160
-		bgt   $t8,$t9,push_done
-
-		# 7) nope → push one more tile
-		j     push_body
-
 	push_bonked:
 		# we bonked into a slab/boundary → give up & unlock
-		move  $a0,$t2            # slab index
+		move  $a0, $s2            # slab index
 		sw    $a0,UNLOCK_SLAB
 
 	push_done: 
-		li    $t0,0
-		sw    $t0,VELOCITY
+		li    $t3,0
+		sw    $t3,VELOCITY
 		lw    $ra,0($sp)
 		addi  $sp,$sp,4
 		jr    $ra
@@ -354,7 +440,7 @@ move_east:
     sw   $t1, ANGLE
     li $t1, 1
     sw $t1, ANGLE_CONTROL
-    li   $t2, 1
+    li   $t2, 4
     sw   $t2, VELOCITY
     jr   $ra 
 
@@ -364,7 +450,7 @@ move_south:
     sw   $t1, ANGLE
     li $t1, 1
     sw $t1, ANGLE_CONTROL
-    li   $t2, 1
+    li   $t2, 4
     sw   $t2, VELOCITY
     jr   $ra 
 
@@ -374,7 +460,7 @@ move_west:
     sw   $t1, ANGLE
     li $t1, 1
     sw $t1, ANGLE_CONTROL
-    li   $t2, 1
+    li   $t2, 4
     sw   $t2, VELOCITY
     jr   $ra 
 
@@ -384,7 +470,7 @@ move_north:
     sw   $t1, ANGLE
     li $t1, 1
     sw $t1, ANGLE_CONTROL
-    li   $t2, 1
+    li   $t2, 4
     sw   $t2, VELOCITY
     jr   $ra 
 
