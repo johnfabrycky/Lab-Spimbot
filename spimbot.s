@@ -78,56 +78,188 @@ main:
 
         # YOUR CODE GOES HERE!!!!!!
 		#putting some movement before solving puzzles
-		sub $sp, $sp, 8
+		sub $sp, $sp, 20
 		sw  $s0, 0($sp)
 		sw  $s1, 4($sp)
+		sw  $s2, 8($sp)
+		sw  $s3, 12($sp)
+		sw  $s4, 16($sp)
 
-		jal solve_puzzle
-		jal solve_puzzle
-		jal solve_puzzle
 
-		jal move_east  
-		lw $s0, BOT_X
-		addi $s1, $s0, 64
-	for1:
-		lw $s0, BOT_X   
-		bge $s0, $s1, after1
-		addi $s0, $s0, 1
-		jal bonk_check
-		j for1
-	after1:
-		li   $t2, 0
-		sw   $t2, VELOCITY
-		jal move_south 
-		lw $s0, BOT_Y
-		addi $s1, $s0, 56
-	for2:
-		lw $s0, BOT_Y   
-		bge $s0, $s1, after2
-		addi $s0, $s0, 1
-		jal bonk_check
-		j for2
-	after2:
-		li   $t2, 0
-		sw   $t2, VELOCITY
-		jal move_east  
-		lw $s0, BOT_X
-		addi $s1, $s0, 64
-	for3:
-		lw $s0, BOT_X   
-		bge $s0, $s1, after3
-		addi $s0, $s0, 1
-		jal bonk_check
-		j for3
-	after3:
-		li   $t2, 0
-		sw   $t2, VELOCITY
-		lw  $s0, 0($sp)
-		lw  $s1, 4($sp)
-		addi $sp, $sp, 8
-		li    $t0, 3
-		sw    $t0, LOCK_SLAB
-		j rest
+		# slab loop: for (i = 0; i < length; i++)
+        la    $t0, slab_buffer
+        lw    $s1, 0($t0)         # s1 = slab_count
+        li    $s2, 0              # s2 = slab index
+		
+	slab_loop_:
+        bge   $s2, $s1, slab_done
+
+       inner_push:
+        # 1) refresh slab info
+        la    $t0, slab_buffer
+        sw    $t0, GET_SLABS
+
+        # 2) pull out row/col
+        li    $t3, 4
+        mul   $t4, $s2, $t3
+        add   $t4, $t4, $t0
+        addi  $t4, $t4, 4
+        lbu   $s3, 0($t4)         # pos_row
+        lbu   $s4, 1($t4)         # pos_col
+
+        # 3) have we already crossed the center line?
+        sll   $t7, $s4, 3         # pixel_center_x = col * 8
+        addi  $t7, $t7, 4
+        li    $t8, 160
+        bgt   $t7, $t8, skip_slab
+
+        # 4) move to *one tile west* of the slab
+        addi  $a0, $s4, -1        # target_col = pos_col - 1
+        move  $a1, $s3            # target_row = pos_row
+        jal   move_to_tile
+
+        # 5) grab exclusive ownership
+        move  $a0, $s2
+        sw    $a0, LOCK_SLAB
+
+        # 6) push *one* tile east (in push_loop)
+        jal   push_loop
+
+
+	skip_slab:
+        addi  $s2, $s2, 1
+        j     slab_loop_
+
+	slab_done:
+        lw    $s0, 0($sp)
+        lw    $s1, 4($sp)
+		lw    $s2, 8($sp)
+		lw    $s3, 12($sp)
+		lw    $s4, 16($sp)
+        addi  $sp, $sp, 20
+
+        # now jump into your existing rest loop
+        j     rest
+
+# move_to_tile(col,row)
+move_to_tile:
+	sub   $sp, $sp, 4
+    sw    $ra, 0($sp)
+	# goal_x = col*8 + 4
+	mul   $t0, $a0, 8
+	addi  $t0, $t0, 4
+	mt_x_loop:
+        lw    $t1, BOT_X
+        beq   $t1, $t0, mt_x_done
+
+        blt   $t1, $t0, mt_go_east
+        # else go west
+        jal   move_west
+        j     mt_wait_x
+
+	mt_go_east:
+		jal   move_east
+
+	mt_wait_x:
+		lw    $t1, BOT_X
+		bne   $t1, $t0, mt_wait_x
+		# stop
+		li    $t2, 0
+		sw    $t2, VELOCITY
+		j     mt_x_loop
+
+	mt_x_done:
+		# goal_y = row*8 + 4
+		sll   $t0, $a1, 3
+		addi  $t0, $t0, 4
+
+	mt_y_loop:
+		lw    $t1, BOT_Y
+		beq   $t1, $t0, mt_done
+
+		blt   $t1, $t0, mt_go_south
+		# else north
+		jal   move_north
+		j     mt_wait_y
+
+	mt_go_south:
+		jal   move_south
+
+	mt_wait_y:
+		lw    $t1, BOT_Y
+		bne   $t1, $t0, mt_wait_y
+		# stop
+		li    $t2, 0
+		sw    $t2, VELOCITY
+		j     mt_y_loop
+
+	mt_done:
+		lw     $ra, 0($sp)
+        addi   $sp, $sp, 4 
+		jr    $ra
+
+push_loop:
+    #—— save $ra once ——  
+    sub  $sp,$sp,4
+    sw    $ra,0($sp)
+
+	push_body:
+		# 1) start pushing east
+		jal   move_east
+
+		# 2) clear any leftover bonk flag
+		sb    $zero,has_bonked
+
+		# 3) re‐fetch slab info
+		la    $t0,slab_buffer
+		sw    $t0,GET_SLABS
+
+		# pull out this slab’s column
+		li    $t1,4
+		mul   $t2,$s2,$t1        # assume slab index in $s2
+		add   $t2,$t2,$t0
+		addi  $t2,$t2,1          # +1 to point at col byte
+		lbu   $t8,0($t2)         # t8 = slab_col
+
+		# compute front_pixel_x = (col*8 + 4) + 8
+		sll   $t8,$t8,3
+		addi  $t8,$t8,12         # = col*8 + 12
+
+	wait_loop_:
+		# 4) have *we* moved the slab up to that threshold?
+		lw    $t9,BOT_X
+		bge   $t9,$t8,maybe_stop
+
+		# 5) still moving → check for a bonk
+		jal   bonk_check
+		# bonk_check resets has_bonked, so instead check VELOCITY
+		lw    $t1,VELOCITY
+		beq   $t1,$zero,push_bonked
+
+		j     wait_loop_
+
+	maybe_stop:
+		# 6) slab has crossed the *center*?
+		li    $t9,160
+		bgt   $t8,$t9,push_done
+
+		# 7) nope → push one more tile
+		j     push_body
+
+	push_bonked:
+		# we bonked into a slab/boundary → give up & unlock
+		move  $a0,$t2            # slab index
+		sw    $a0,UNLOCK_SLAB
+
+	push_done: 
+		li    $t0,0
+		sw    $t0,VELOCITY
+		lw    $ra,0($sp)
+		addi  $sp,$sp,4
+		jr    $ra
+
+
+
 
 wait_feedback:
     # Wait until the FEEDBACK interrupt sets 'wait' to nonzero.
